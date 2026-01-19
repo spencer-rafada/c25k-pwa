@@ -2,15 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { workouts, workoutId } from '@/lib/workouts';
-import { loadProgress } from '@/lib/storage';
+import { getCompletedWorkoutIds } from '@/lib/storage';
 import Link from 'next/link';
 
 export default function ProgressTracker() {
   const [completedWorkouts, setCompletedWorkouts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const progress = loadProgress();
-    setCompletedWorkouts(new Set(progress.completedWorkouts));
+    const completedIds = getCompletedWorkoutIds();
+    setCompletedWorkouts(new Set(completedIds));
   }, []);
 
   const weeks = Array.from({ length: 9 }, (_, i) => i + 1);

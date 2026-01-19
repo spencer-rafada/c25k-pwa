@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { getWorkoutById, getTotalDuration } from '@/lib/workouts';
-import { markWorkoutComplete } from '@/lib/storage';
+import { completeWorkout } from '@/lib/auth';
 import Timer from '@/components/Timer';
 
 export default function WorkoutPage() {
@@ -28,8 +28,8 @@ export default function WorkoutPage() {
     );
   }
 
-  const handleComplete = () => {
-    markWorkoutComplete(id);
+  const handleComplete = async (durationSeconds: number) => {
+    await completeWorkout(id, durationSeconds);
   };
 
   const totalMinutes = Math.ceil(getTotalDuration(workout) / 60);
