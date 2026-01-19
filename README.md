@@ -1,36 +1,63 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# C25K PWA
+
+A Progressive Web App for the Couch-to-5K interval training program.
 
 ## Getting Started
 
-First, run the development server:
-
+1. Install dependencies:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Run the development server:
+```bash
+npm run dev
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## PWA Icons
 
-## Learn More
+The app requires PNG icons for PWA installation. To generate icons from the SVG:
 
-To learn more about Next.js, take a look at the following resources:
+You can use an online tool like [Favicon Generator](https://realfavicongenerator.net/) or use ImageMagick:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+# Install ImageMagick if needed
+brew install imagemagick
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# Convert SVG to PNG icons
+convert -background none -resize 192x192 public/icons/icon.svg public/icons/icon-192.png
+convert -background none -resize 512x512 public/icons/icon.svg public/icons/icon-512.png
+```
 
-## Deploy on Vercel
+Or create your own custom icons and save them as:
+- `public/icons/icon-192.png` (192x192px)
+- `public/icons/icon-512.png` (512x512px)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Features
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 9-week C25K program with all workouts
+- Interval timer with audio cues
+- Progress tracking (localStorage)
+- PWA installable on iOS/Android
+- Works offline
+- Dark theme optimized for outdoor use
+- Wake Lock API to keep screen active (where supported)
+
+## Testing on iOS
+
+1. Build and run the app
+2. Open in Safari on iOS
+3. Tap the Share button
+4. Select "Add to Home Screen"
+5. Open from home screen to test standalone mode
+
+## Tech Stack
+
+- Next.js 14+ (App Router)
+- TypeScript
+- Tailwind CSS
+- next-pwa
+- Web Audio API
+- Wake Lock API
