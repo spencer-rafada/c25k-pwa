@@ -9,7 +9,7 @@ type TimerState = 'idle' | 'running' | 'paused' | 'completed';
 
 interface TimerProps {
   workout: Workout;
-  onComplete: () => void;
+  onComplete: (durationSeconds: number) => void;
 }
 
 export default function Timer({ workout, onComplete }: TimerProps) {
@@ -20,6 +20,7 @@ export default function Timer({ workout, onComplete }: TimerProps) {
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const startTimeRef = useRef<number | null>(null);
 
   const currentInterval = workout.intervals[currentIntervalIndex];
   const totalIntervals = workout.intervals.length;
@@ -70,6 +71,7 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     handleInitAudio();
     setState('running');
     requestWakeLock();
+    startTimeRef.current = Date.now();
 
     // Play cue for first interval if it's run or walk
     if (currentInterval.type === 'run' || currentInterval.type === 'walk') {
@@ -134,7 +136,13 @@ export default function Timer({ workout, onComplete }: TimerProps) {
                 intervalRef.current = null;
               }
               releaseWakeLock();
-              onComplete();
+
+              // Calculate actual workout duration
+              const durationSeconds = startTimeRef.current
+                ? Math.floor((Date.now() - startTimeRef.current) / 1000)
+                : totalDuration;
+
+              onComplete(durationSeconds);
               return 0;
             }
           }

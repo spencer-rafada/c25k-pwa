@@ -31,6 +31,8 @@ export const viewport: Viewport = {
   themeColor: "#10b981",
 };
 
+import { AuthProvider } from '@/components/AuthProvider';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -41,7 +43,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
