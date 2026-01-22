@@ -64,7 +64,10 @@ If you want users to be able to sign in and sync progress across devices, follow
 #### Configure Redirect URLs
 
 1. In Supabase dashboard, go to Authentication → URL Configuration
-2. Add your site URLs to allowed redirect URLs:
+2. Add the callback URLs to allowed redirect URLs:
+   - Production: `https://yourdomain.com/auth/callback`
+   - Development: `http://localhost:3000/auth/callback`
+3. Also add the root URLs for general redirects:
    - Production: `https://yourdomain.com`
    - Development: `http://localhost:3000`
 
@@ -119,6 +122,11 @@ Or create your own custom icons and save them as:
 - Magic link (passwordless email)
 - Non-blocking: Use app anonymously, sign in anytime
 - Persistent sessions across app launches
+- **iOS Magic Link Flow**: When tapping a magic link on iOS, Safari opens with a smart landing page that:
+  - Completes authentication
+  - Confirms success with clear visual feedback
+  - Guides users back to the installed PWA
+  - Session automatically available in PWA via shared cookies
 
 ### PWA Capabilities
 - Installable on iOS/Android
