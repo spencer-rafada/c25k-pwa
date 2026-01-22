@@ -1,76 +1,34 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 type CallbackState = 'loading' | 'success' | 'error';
 
-export default function AuthCallbackPage() {
+export default function AuthCallbackStatusPage() {
   const [state, setState] = useState<CallbackState>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const router = useRouter();
-  const supabase = createClient();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
-    const handleCallback = async () => {
-      try {
-        // Get the code from the URL
-        const params = new URLSearchParams(window.location.search);
-        const code = params.get('code');
-        const error = params.get('error');
-        const errorDescription = params.get('error_description');
+    // Check URL parameters to determine state
+    const success = searchParams.get('success');
+    const error = searchParams.get('error');
 
-        // Check for errors in URL
-        if (error) {
-          setState('error');
-          setErrorMessage(
-            errorDescription || 'Authentication failed. Please try again.'
-          );
-          return;
-        }
-
-        // If no code, show error
-        if (!code) {
-          setState('error');
-          setErrorMessage('No authentication code found. Please try again.');
-          return;
-        }
-
-        // Exchange code for session
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-
-        if (exchangeError) {
-          console.error('Auth exchange error:', exchangeError);
-          setState('error');
-          setErrorMessage(
-            exchangeError.message || 'This link may have expired. Please try again.'
-          );
-          return;
-        }
-
-        // Success! Session is now stored
-        setState('success');
-      } catch (err) {
-        console.error('Callback error:', err);
+    if (success === 'true') {
+      setState('success');
+    } else if (error) {
+      setState('error');
+      setErrorMessage(decodeURIComponent(error));
+    } else {
+      // If we somehow got here without parameters, show loading briefly then error
+      setTimeout(() => {
         setState('error');
-        setErrorMessage('An unexpected error occurred. Please try again.');
-      }
-    };
-
-    handleCallback();
-  }, [supabase.auth]);
-
-  const getAppUrl = () => {
-    if (typeof window !== 'undefined') {
-      const { protocol, hostname, port } = window.location;
-      if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return 'http://localhost:3000';
-      }
-      return `${protocol}//${hostname}${port ? `:${port}` : ''}`;
+        setErrorMessage('Invalid callback URL. Please try again.');
+      }, 1000);
     }
-    return '/';
-  };
+  }, [searchParams]);
 
   const handleOpenApp = () => {
     router.push('/');
