@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Workout, Interval } from '@/lib/workouts';
 import { initAudio, playIntervalCue } from '@/lib/audio';
 import IntervalDisplay from './IntervalDisplay';
@@ -13,29 +13,44 @@ interface TimerProps {
 }
 
 export default function Timer({ workout, onComplete }: TimerProps) {
+  // UI State
   const [state, setState] = useState<TimerState>('idle');
   const [currentIntervalIndex, setCurrentIntervalIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(workout.intervals[0].durationSeconds);
   const [audioInitialized, setAudioInitialized] = useState(false);
 
+  /**
+   * Refs for time tracking and system resources
+   *
+   * Using refs instead of state because these values:
+   * 1. Don't need to trigger re-renders when they change
+   * 2. Need to persist across renders without causing re-render loops
+   * 3. Are accessed frequently in callbacks and intervals
+   *
+   * Time-based approach: Instead of counting ticks, we store actual timestamps
+   * and calculate current state based on elapsed time. This makes the timer
+   * resilient to browser throttling when app is backgrounded.
+   */
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const startTimeRef = useRef<number | null>(null);
-  const intervalStartTimeRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null); // When workout started
+  const intervalStartTimeRef = useRef<number | null>(null); // When current interval started
 
   const currentInterval = workout.intervals[currentIntervalIndex];
   const totalIntervals = workout.intervals.length;
 
-  // Calculate overall progress
+  // Cache total workout duration (doesn't change during workout)
+  const totalDuration = useMemo(
+    () => workout.intervals.reduce((sum, interval) => sum + interval.durationSeconds, 0),
+    [workout.intervals]
+  );
+
+  // Calculate overall progress for progress bar
   const completedSeconds = workout.intervals
     .slice(0, currentIntervalIndex)
     .reduce((sum, interval) => sum + interval.durationSeconds, 0);
   const currentIntervalElapsed = currentInterval.durationSeconds - timeRemaining;
   const totalElapsed = completedSeconds + currentIntervalElapsed;
-  const totalDuration = workout.intervals.reduce(
-    (sum, interval) => sum + interval.durationSeconds,
-    0
-  );
   const overallProgress = (totalElapsed / totalDuration) * 100;
 
   // Initialize audio on first user interaction
@@ -67,16 +82,25 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     }
   };
 
-  // Start timer
+  /**
+   * Start the workout timer
+   *
+   * Initializes both workout start time and interval start time to 'now'.
+   * These timestamps are critical for the time-based calculation approach:
+   * - startTimeRef: Tracks when entire workout began
+   * - intervalStartTimeRef: Tracks when current interval began
+   */
   const start = () => {
     handleInitAudio();
     setState('running');
     requestWakeLock();
+
+    // Capture current time for both workout and interval tracking
     const now = Date.now();
     startTimeRef.current = now;
     intervalStartTimeRef.current = now;
 
-    // Play cue for first interval if it's run or walk
+    // Play audio cue for first interval (run/walk only, not warmup)
     if (currentInterval.type === 'run' || currentInterval.type === 'walk') {
       playIntervalCue(currentInterval.type);
     }
@@ -97,7 +121,15 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     setState('running');
   };
 
-  // Skip to next interval
+  /**
+   * Skip to next interval
+   *
+   * When user manually skips, we need to adjust our time tracking to maintain
+   * accuracy for the overall workout duration and future interval calculations.
+   *
+   * We adjust startTimeRef backwards by the amount of time that "should have"
+   * elapsed up to this point, so recalculateTimerState() continues to work correctly.
+   */
   const skipInterval = () => {
     if (currentIntervalIndex < totalIntervals - 1) {
       const nextIndex = currentIntervalIndex + 1;
@@ -106,11 +138,13 @@ export default function Timer({ workout, onComplete }: TimerProps) {
       setCurrentIntervalIndex(nextIndex);
       setTimeRemaining(nextInterval.durationSeconds);
 
-      // Update interval start time to current time when skipping
+      // Update time tracking when skipping during active workout
       if (state === 'running') {
         intervalStartTimeRef.current = Date.now();
 
-        // Adjust workout start time to account for skipped time
+        // Adjust workout start time to maintain accuracy
+        // We pretend the workout started earlier so the skipped intervals
+        // appear to have already elapsed in our time calculations
         if (startTimeRef.current) {
           const skippedSeconds = workout.intervals
             .slice(0, nextIndex)
@@ -118,6 +152,7 @@ export default function Timer({ workout, onComplete }: TimerProps) {
           startTimeRef.current = Date.now() - skippedSeconds * 1000;
         }
 
+        // Play audio cue for the new interval
         if (nextInterval.type === 'run' || nextInterval.type === 'walk') {
           playIntervalCue(nextInterval.type);
         }
@@ -125,19 +160,40 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     }
   };
 
-  // Recalculate timer state based on actual elapsed time
+  /**
+   * Recalculate timer state based on actual elapsed time (not tick counting)
+   *
+   * This function is the core of the background-resilient timer. Instead of
+   * assuming each setInterval tick equals 1 second, we calculate the current
+   * state based on how much real time has actually elapsed since workout start.
+   *
+   * This ensures the timer works correctly even when:
+   * - App is backgrounded (browser throttles setInterval)
+   * - User switches tabs/windows
+   * - Device goes to sleep
+   * - User returns after extended absence
+   *
+   * The function:
+   * 1. Calculates total elapsed time from workout start
+   * 2. Determines which interval we should be on based on that time
+   * 3. Auto-advances through any missed intervals
+   * 4. Updates timeRemaining to reflect actual remaining time
+   */
   const recalculateTimerState = useCallback(() => {
     if (!startTimeRef.current || state !== 'running') return;
 
+    // Calculate how much real time has passed since workout started
     const totalElapsedMs = Date.now() - startTimeRef.current;
     const totalElapsedSeconds = Math.floor(totalElapsedMs / 1000);
 
-    // Calculate which interval we should be on
+    // Walk through intervals to find which one we should be on
+    // accumulatedSeconds tracks the start time of each interval
     let accumulatedSeconds = 0;
     let targetIntervalIndex = 0;
 
     for (let i = 0; i < workout.intervals.length; i++) {
       const intervalDuration = workout.intervals[i].durationSeconds;
+      // If elapsed time falls within this interval's duration window
       if (totalElapsedSeconds < accumulatedSeconds + intervalDuration) {
         targetIntervalIndex = i;
         break;
@@ -146,7 +202,7 @@ export default function Timer({ workout, onComplete }: TimerProps) {
       targetIntervalIndex = i + 1; // In case we're past the last interval
     }
 
-    // Check if workout is complete
+    // Workout complete - we've passed all intervals
     if (targetIntervalIndex >= workout.intervals.length) {
       setState('completed');
       if (intervalRef.current) {
@@ -158,35 +214,49 @@ export default function Timer({ workout, onComplete }: TimerProps) {
       return;
     }
 
-    // If we've advanced to a new interval, update state and play cue
+    // Interval transition - we've moved to a new interval since last calculation
+    // This handles both normal progression and catching up after backgrounding
     if (targetIntervalIndex !== currentIntervalIndex) {
       setCurrentIntervalIndex(targetIntervalIndex);
+      // Update interval start time for accurate tracking
       intervalStartTimeRef.current = startTimeRef.current + accumulatedSeconds * 1000;
 
+      // Play audio cue for new interval (run/walk only)
       const targetInterval = workout.intervals[targetIntervalIndex];
       if (targetInterval.type === 'run' || targetInterval.type === 'walk') {
         playIntervalCue(targetInterval.type);
       }
     }
 
-    // Calculate time remaining in current interval
+    // Calculate and display remaining time in current interval
     const intervalElapsedSeconds = totalElapsedSeconds - accumulatedSeconds;
     const intervalDuration = workout.intervals[targetIntervalIndex].durationSeconds;
     const remaining = Math.max(0, intervalDuration - intervalElapsedSeconds);
     setTimeRemaining(remaining);
   }, [state, currentIntervalIndex, workout.intervals, onComplete, releaseWakeLock]);
 
-  // Timer tick effect
+  /**
+   * Timer tick effect - drives the countdown display
+   *
+   * Updates every 200ms (5 times per second) which provides:
+   * - Smooth visual countdown for users
+   * - Reasonable CPU usage (not too aggressive)
+   * - Fast enough to catch background returns quickly
+   *
+   * Note: Even if browser throttles this interval when backgrounded,
+   * recalculateTimerState() will correctly catch up based on real elapsed time.
+   */
   useEffect(() => {
     if (state === 'running') {
-      // Initial calculation
+      // Calculate immediately on state change to 'running'
       recalculateTimerState();
 
-      // Update every 100ms for smooth countdown
+      // Update every 200ms for smooth countdown display
       intervalRef.current = setInterval(() => {
         recalculateTimerState();
-      }, 100);
+      }, 200);
     } else {
+      // Clean up interval when paused, idle, or completed
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -201,7 +271,18 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     };
   }, [state, recalculateTimerState]);
 
-  // Page Visibility API - recalculate when user returns
+  /**
+   * Page Visibility API - handle backgrounding/foregrounding
+   *
+   * Detects when user returns to the app after:
+   * - Switching to another app/tab
+   * - Locking device
+   * - Minimizing browser
+   *
+   * When user returns, immediately recalculate to show accurate time.
+   * This ensures users see the correct state instantly rather than
+   * waiting up to 200ms for the next interval tick.
+   */
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!document.hidden && state === 'running') {
