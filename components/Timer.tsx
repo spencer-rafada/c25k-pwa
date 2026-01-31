@@ -21,6 +21,7 @@ export default function Timer({ workout, onComplete }: TimerProps) {
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const intervalStartTimeRef = useRef<number | null>(null);
 
   const currentInterval = workout.intervals[currentIntervalIndex];
   const totalIntervals = workout.intervals.length;
@@ -71,7 +72,9 @@ export default function Timer({ workout, onComplete }: TimerProps) {
     handleInitAudio();
     setState('running');
     requestWakeLock();
-    startTimeRef.current = Date.now();
+    const now = Date.now();
+    startTimeRef.current = now;
+    intervalStartTimeRef.current = now;
 
     // Play cue for first interval if it's run or walk
     if (currentInterval.type === 'run' || currentInterval.type === 'walk') {
@@ -103,52 +106,86 @@ export default function Timer({ workout, onComplete }: TimerProps) {
       setCurrentIntervalIndex(nextIndex);
       setTimeRemaining(nextInterval.durationSeconds);
 
-      if (state === 'running' && (nextInterval.type === 'run' || nextInterval.type === 'walk')) {
-        playIntervalCue(nextInterval.type);
+      // Update interval start time to current time when skipping
+      if (state === 'running') {
+        intervalStartTimeRef.current = Date.now();
+
+        // Adjust workout start time to account for skipped time
+        if (startTimeRef.current) {
+          const skippedSeconds = workout.intervals
+            .slice(0, nextIndex)
+            .reduce((sum, interval) => sum + interval.durationSeconds, 0);
+          startTimeRef.current = Date.now() - skippedSeconds * 1000;
+        }
+
+        if (nextInterval.type === 'run' || nextInterval.type === 'walk') {
+          playIntervalCue(nextInterval.type);
+        }
       }
     }
   };
 
+  // Recalculate timer state based on actual elapsed time
+  const recalculateTimerState = useCallback(() => {
+    if (!startTimeRef.current || state !== 'running') return;
+
+    const totalElapsedMs = Date.now() - startTimeRef.current;
+    const totalElapsedSeconds = Math.floor(totalElapsedMs / 1000);
+
+    // Calculate which interval we should be on
+    let accumulatedSeconds = 0;
+    let targetIntervalIndex = 0;
+
+    for (let i = 0; i < workout.intervals.length; i++) {
+      const intervalDuration = workout.intervals[i].durationSeconds;
+      if (totalElapsedSeconds < accumulatedSeconds + intervalDuration) {
+        targetIntervalIndex = i;
+        break;
+      }
+      accumulatedSeconds += intervalDuration;
+      targetIntervalIndex = i + 1; // In case we're past the last interval
+    }
+
+    // Check if workout is complete
+    if (targetIntervalIndex >= workout.intervals.length) {
+      setState('completed');
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      releaseWakeLock();
+      onComplete(totalElapsedSeconds);
+      return;
+    }
+
+    // If we've advanced to a new interval, update state and play cue
+    if (targetIntervalIndex !== currentIntervalIndex) {
+      setCurrentIntervalIndex(targetIntervalIndex);
+      intervalStartTimeRef.current = startTimeRef.current + accumulatedSeconds * 1000;
+
+      const targetInterval = workout.intervals[targetIntervalIndex];
+      if (targetInterval.type === 'run' || targetInterval.type === 'walk') {
+        playIntervalCue(targetInterval.type);
+      }
+    }
+
+    // Calculate time remaining in current interval
+    const intervalElapsedSeconds = totalElapsedSeconds - accumulatedSeconds;
+    const intervalDuration = workout.intervals[targetIntervalIndex].durationSeconds;
+    const remaining = Math.max(0, intervalDuration - intervalElapsedSeconds);
+    setTimeRemaining(remaining);
+  }, [state, currentIntervalIndex, workout.intervals, onComplete, releaseWakeLock]);
+
   // Timer tick effect
   useEffect(() => {
     if (state === 'running') {
+      // Initial calculation
+      recalculateTimerState();
+
+      // Update every 100ms for smooth countdown
       intervalRef.current = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            // Move to next interval
-            if (currentIntervalIndex < totalIntervals - 1) {
-              const nextIndex = currentIntervalIndex + 1;
-              const nextInterval = workout.intervals[nextIndex];
-
-              setCurrentIntervalIndex(nextIndex);
-
-              // Play audio cue for run/walk transitions
-              if (nextInterval.type === 'run' || nextInterval.type === 'walk') {
-                playIntervalCue(nextInterval.type);
-              }
-
-              return nextInterval.durationSeconds;
-            } else {
-              // Workout complete
-              setState('completed');
-              if (intervalRef.current) {
-                clearInterval(intervalRef.current);
-                intervalRef.current = null;
-              }
-              releaseWakeLock();
-
-              // Calculate actual workout duration
-              const durationSeconds = startTimeRef.current
-                ? Math.floor((Date.now() - startTimeRef.current) / 1000)
-                : totalDuration;
-
-              onComplete(durationSeconds);
-              return 0;
-            }
-          }
-          return prev - 1;
-        });
-      }, 1000);
+        recalculateTimerState();
+      }, 100);
     } else {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -162,7 +199,20 @@ export default function Timer({ workout, onComplete }: TimerProps) {
         intervalRef.current = null;
       }
     };
-  }, [state, currentIntervalIndex, totalIntervals, workout.intervals, onComplete]);
+  }, [state, recalculateTimerState]);
+
+  // Page Visibility API - recalculate when user returns
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && state === 'running') {
+        console.log('App visible again - recalculating timer state');
+        recalculateTimerState();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [state, recalculateTimerState]);
 
   // Cleanup on unmount
   useEffect(() => {
